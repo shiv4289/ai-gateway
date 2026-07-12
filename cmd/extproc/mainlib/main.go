@@ -342,8 +342,14 @@ func Main(ctx context.Context, args []string, stderr io.Writer) (err error) {
 	mcpMetrics := metrics.NewMCP(meter, metricsRequestHeaderAttributes)
 
 	extproc.LogRequestHeaderAttributes = logRequestHeaderAttributes
-	extproc.UsageEventsAttributeMapping, _ = internalapi.ParseRequestHeaderAttributeMapping(flags.usageEventsAttributes)
-	usageEventHTTPHeaders, _ := usageevents.ParseHTTPHeaderMapping(flags.usageEventsHTTPHeaders)
+	extproc.UsageEventsAttributeMapping, err = internalapi.ParseRequestHeaderAttributeMapping(flags.usageEventsAttributes)
+	if err != nil {
+		return fmt.Errorf("failed to parse usage events attributes: %w", err)
+	}
+	usageEventHTTPHeaders, err := usageevents.ParseHTTPHeaderMapping(flags.usageEventsHTTPHeaders)
+	if err != nil {
+		return fmt.Errorf("failed to parse usage events HTTP headers: %w", err)
+	}
 	usageEventsCfg := usageevents.Config{
 		Mode:                 flags.usageEventsMode,
 		Sink:                 flags.usageEventsSink,
