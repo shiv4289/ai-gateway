@@ -50,7 +50,7 @@ func TestPublisherPublishRequired(t *testing.T) {
 		BackoffPolicy:        BackoffPolicyConstant,
 		StreamingMode:        StreamingModeBestEffortFallback,
 		HTTPMaxResponseBytes: 1024,
-	}, sink, slog.Default())
+	}, sink, slog.Default(), nil)
 
 	err := p.Publish(t.Context(), UsageEvent{EventID: "evt-1", SchemaVersion: "v1"}, false)
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestPublisherPublishStreamingFallback(t *testing.T) {
 		BackoffPolicy:        BackoffPolicyConstant,
 		StreamingMode:        StreamingModeBestEffortFallback,
 		HTTPMaxResponseBytes: 1024,
-	}, sink, slog.Default())
+	}, sink, slog.Default(), nil)
 
 	err := p.Publish(t.Context(), UsageEvent{EventID: "evt-1", SchemaVersion: "v1"}, true)
 	require.NoError(t, err)
@@ -88,7 +88,7 @@ func TestPublisherBestEffortUsesTimeout(t *testing.T) {
 		BackoffPolicy:        BackoffPolicyConstant,
 		StreamingMode:        StreamingModeBestEffortFallback,
 		HTTPMaxResponseBytes: 1024,
-	}, sink, slog.Default())
+	}, sink, slog.Default(), nil)
 
 	require.NoError(t, p.Publish(t.Context(), UsageEvent{EventID: "evt-timeout", SchemaVersion: "v1"}, false))
 	require.Eventually(t, func() bool {

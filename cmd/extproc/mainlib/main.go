@@ -372,7 +372,11 @@ func Main(ctx context.Context, args []string, stderr io.Writer) (err error) {
 	default:
 		usageSink = usageevents.NewLogSink(l.With("component", "usage-events"))
 	}
-	extproc.UsageEventsPublisher = usageevents.NewPublisher(usageEventsCfg, usageSink, l.With("component", "usage-events"))
+	usageEventsTelemetry, err := usageevents.NewTelemetry(meter)
+	if err != nil {
+		return fmt.Errorf("failed to create usage events telemetry: %w", err)
+	}
+	extproc.UsageEventsPublisher = usageevents.NewPublisher(usageEventsCfg, usageSink, l.With("component", "usage-events"), usageEventsTelemetry)
 
 	server, err := extproc.NewServer(l, flags.enableRedaction)
 	if err != nil {

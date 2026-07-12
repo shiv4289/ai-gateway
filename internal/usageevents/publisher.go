@@ -14,17 +14,23 @@ import (
 
 // Publisher sends usage events according to configured delivery semantics.
 type Publisher struct {
-	cfg    Config
-	sink   UsageEventSink
-	logger *slog.Logger
+	cfg       Config
+	sink      UsageEventSink
+	logger    *slog.Logger
+	telemetry *Telemetry
 }
 
-func NewPublisher(cfg Config, sink UsageEventSink, logger *slog.Logger) *Publisher {
-	return &Publisher{cfg: cfg, sink: sink, logger: logger}
+func NewPublisher(cfg Config, sink UsageEventSink, logger *slog.Logger, telemetry *Telemetry) *Publisher {
+	return &Publisher{cfg: cfg, sink: sink, logger: logger, telemetry: telemetry}
 }
 
 func (p *Publisher) Publish(ctx context.Context, event UsageEvent, streaming bool) error {
-	if p == nil || p.sink == nil {
+	if p == nil {
+		return nil
+	}
+	start := time.Now()
+	if p.sink == nil {
+		p.telemetry.recordDropped(ctx, p.cfg.Mode, p.cfg.Sink)
 		return nil
 	}
 
@@ -38,7 +44,14 @@ func (p *Publisher) Publish(ctx context.Context, event UsageEvent, streaming boo
 	}
 
 	if p.cfg.Mode == ModeRequired {
-		return p.publishRequired(ctx, event)
+		err := p.publishRequired(ctx, event)
+		durationMs := float64(time.Since(start).Milliseconds())
+		if err != nil {
+			p.telemetry.recordFailed(ctx, p.cfg.Mode, p.cfg.Sink, durationMs)
+			return err
+		}
+		p.telemetry.recordExported(ctx, p.cfg.Mode, p.cfg.Sink, durationMs)
+		return nil
 	}
 	p.publishBestEffort(event)
 	return nil
@@ -49,9 +62,15 @@ func (p *Publisher) publishBestEffort(event UsageEvent) {
 		// Bound best-effort publish time so sink outages do not accumulate stuck goroutines.
 		attemptCtx, cancel := context.WithTimeout(context.Background(), time.Duration(p.cfg.TimeoutMs)*time.Millisecond)
 		defer cancel()
-		if err := p.sink.Publish(attemptCtx, event); err != nil && p.logger != nil {
-			p.logger.Warn("best effort usage event publish failed", "error", err)
+		start := time.Now()
+		if err := p.sink.Publish(attemptCtx, event); err != nil {
+			if p.logger != nil {
+				p.logger.Warn("best effort usage event publish failed", "error", err)
+			}
+			p.telemetry.recordFailed(attemptCtx, p.cfg.Mode, p.cfg.Sink, float64(time.Since(start).Milliseconds()))
+			return
 		}
+		p.telemetry.recordExported(attemptCtx, p.cfg.Mode, p.cfg.Sink, float64(time.Since(start).Milliseconds()))
 	}()
 }
 
