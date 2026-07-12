@@ -342,6 +342,31 @@ func Main(ctx context.Context, args []string, stderr io.Writer) (err error) {
 	mcpMetrics := metrics.NewMCP(meter, metricsRequestHeaderAttributes)
 
 	extproc.LogRequestHeaderAttributes = logRequestHeaderAttributes
+	extproc.UsageEventsAttributeMapping, _ = internalapi.ParseRequestHeaderAttributeMapping(flags.usageEventsAttributes)
+	usageEventHTTPHeaders, _ := usageevents.ParseHTTPHeaderMapping(flags.usageEventsHTTPHeaders)
+	usageEventsCfg := usageevents.Config{
+		Mode:                 flags.usageEventsMode,
+		Sink:                 flags.usageEventsSink,
+		TimeoutMs:            flags.usageEventsTimeoutMs,
+		MaxRetries:           flags.usageEventsMaxRetries,
+		BackoffPolicy:        flags.usageEventsBackoffPolicy,
+		StreamingMode:        flags.usageEventsStreamingMode,
+		Attributes:           extproc.UsageEventsAttributeMapping,
+		HTTPURL:              flags.usageEventsHTTPURL,
+		HTTPHeaders:          usageEventHTTPHeaders,
+		HTTPMaxResponseBytes: flags.usageEventsHTTPMaxResponseBytes,
+	}
+	var usageSink usageevents.UsageEventSink
+	switch usageEventsCfg.Sink {
+	case usageevents.SinkNoop:
+		usageSink = usageevents.NewNoopSink()
+	case usageevents.SinkHTTP:
+		usageSink = usageevents.NewHTTPSink(&http.Client{Timeout: time.Duration(usageEventsCfg.TimeoutMs) * time.Millisecond},
+			usageEventsCfg.HTTPURL, usageEventsCfg.HTTPHeaders, usageEventsCfg.HTTPMaxResponseBytes)
+	default:
+		usageSink = usageevents.NewLogSink(l.With("component", "usage-events"))
+	}
+	extproc.UsageEventsPublisher = usageevents.NewPublisher(usageEventsCfg, usageSink, l.With("component", "usage-events"))
 
 	server, err := extproc.NewServer(l, flags.enableRedaction)
 	if err != nil {

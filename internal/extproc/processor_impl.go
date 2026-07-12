@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3http "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
@@ -127,6 +128,8 @@ type (
 		costs metrics.TokenUsage
 		// metrics tracking.
 		metrics metrics.Metrics
+		// requestStart is used for usage event latency.
+		requestStart time.Time
 	}
 )
 
@@ -324,6 +327,7 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessReque
 
 	// Start tracking metrics for this request.
 	u.metrics.StartRequest(u.requestHeaders)
+	u.requestStart = time.Now()
 	// Set the original model from the request body before any overrides
 	u.metrics.SetOriginalModel(u.parent.originalModel)
 	// Set the request model for metrics from the original model or override if applied.
@@ -583,7 +587,25 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRespo
 	if body.EndOfStream && u.parent.span != nil {
 		u.parent.span.EndSpan()
 	}
+
+	if shouldPublishUsageEvent(u.parent.stream, body.EndOfStream) {
+		event := buildUsageEvent(u.requestHeaders, u.responseHeaders, u.routeName, u.backendName, responseModel, u.costs, u.metrics, u.requestStart)
+		if err := UsageEventsPublisher.Publish(ctx, event, u.parent.stream); err != nil {
+			return createUserFacingErrorResponse(500, "InternalServerError", "failed to publish usage event"), nil
+		}
+	}
+
 	return resp, nil
+}
+
+func shouldPublishUsageEvent(streaming bool, endOfStream bool) bool {
+	if UsageEventsPublisher == nil {
+		return false
+	}
+	if !streaming {
+		return true
+	}
+	return endOfStream
 }
 
 // decodeStreamingContent handles decompression for streaming responses with content-encoding.
