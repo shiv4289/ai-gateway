@@ -16,6 +16,8 @@ import (
 	"github.com/envoyproxy/ai-gateway/internal/usageevents"
 )
 
+const usageEventInternalReqIDHeader = internalapi.EnvoyAIGatewayHeaderPrefix + "internal-req-id"
+
 // UsageEventsPublisher is configured at extproc startup.
 var UsageEventsPublisher *usageevents.Publisher
 
@@ -62,6 +64,10 @@ func buildUsageEvent(
 	}
 
 	path := requestHeaders[":path"]
+	if path == "" {
+		path = requestHeaders[internalapi.OriginalPathHeader]
+	}
+	provider := providerFromBackendName(backendName)
 	return usageevents.UsageEvent{
 		SchemaVersion: schemaVersion,
 		EventID:       buildUsageEventID(requestHeaders, routeName, backendName),
@@ -77,7 +83,7 @@ func buildUsageEvent(
 		},
 		Backend: usageevents.UsageEventBackend{
 			Name:     backendName,
-			Provider: backendName,
+			Provider: provider,
 		},
 		Model: usageevents.UsageEventModel{
 			Requested: requestHeaders[internalapi.ModelNameHeaderKeyDefault],
@@ -100,7 +106,10 @@ func buildUsageEvent(
 }
 
 func buildUsageEventID(requestHeaders map[string]string, routeName, backendName string) string {
-	baseReqID := requestHeaders["x-request-id"]
+	baseReqID := requestHeaders[usageEventInternalReqIDHeader]
+	if baseReqID == "" {
+		baseReqID = requestHeaders["x-request-id"]
+	}
 	if baseReqID == "" {
 		baseReqID = "unknown"
 	}
@@ -108,26 +117,50 @@ func buildUsageEventID(requestHeaders map[string]string, routeName, backendName 
 }
 
 func operationFromPath(path string) string {
+	if i := strings.Index(path, "?"); i >= 0 {
+		path = path[:i]
+	}
+	path = strings.TrimSuffix(path, "/")
 	switch {
 	case path == "":
 		return "unknown"
-	case containsPath(path, "/v1/chat/completions"):
+	case strings.HasSuffix(path, "/v1/chat/completions"):
 		return "chat"
-	case containsPath(path, "/v1/completions"):
+	case strings.HasSuffix(path, "/v1/completions"):
 		return "completion"
-	case containsPath(path, "/v1/embeddings"):
+	case strings.HasSuffix(path, "/v1/embeddings"):
 		return "embeddings"
-	case containsPath(path, "/v1/responses"):
+	case strings.HasSuffix(path, "/v1/responses"):
 		return "responses"
-	case containsPath(path, "/v1/messages"):
+	case strings.HasSuffix(path, "/v1/messages"):
 		return "messages"
+	case strings.HasSuffix(path, "/v1/images/generations"):
+		return "image_generation"
+	case strings.HasSuffix(path, "/v2/rerank"):
+		return "rerank"
 	default:
 		return "unknown"
 	}
 }
 
-func containsPath(path, suffix string) bool {
-	return strings.Contains(path, suffix)
+func providerFromBackendName(backendName string) string {
+	normalized := strings.ToLower(backendName)
+	switch {
+	case strings.Contains(normalized, "azure"):
+		return "azure.openai"
+	case strings.Contains(normalized, "bedrock"):
+		return "aws.bedrock"
+	case strings.Contains(normalized, "vertex"):
+		return "gcp.vertex_ai"
+	case strings.Contains(normalized, "cohere"):
+		return "cohere"
+	case strings.Contains(normalized, "anthropic"):
+		return "anthropic"
+	case strings.Contains(normalized, "openai"):
+		return "openai"
+	default:
+		return "unknown"
+	}
 }
 
 func maybeInt(ok bool, v uint32) int {
