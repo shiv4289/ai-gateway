@@ -34,6 +34,7 @@ import (
 	"github.com/envoyproxy/ai-gateway/internal/metrics"
 	"github.com/envoyproxy/ai-gateway/internal/requestheaderattrs"
 	"github.com/envoyproxy/ai-gateway/internal/tracing"
+	"github.com/envoyproxy/ai-gateway/internal/usageevents"
 	"github.com/envoyproxy/ai-gateway/internal/version"
 )
 
@@ -54,6 +55,16 @@ type extProcFlags struct {
 	mcpFallbackSessionEncryptionSeed       string        // Fallback seed for deriving the key for encrypting MCP sessions.
 	mcpFallbackSessionEncryptionIterations int           // Number of iterations to use for PBKDF2 key derivation for fallback MCP session encryption.
 	mcpWriteTimeout                        time.Duration // the maximum duration before timing out writes of the MCP response.
+	usageEventsMode                        string        // usage event delivery mode.
+	usageEventsSink                        string        // usage event sink type.
+	usageEventsTimeoutMs                   int           // timeout for required usage event publishing.
+	usageEventsMaxRetries                  int           // max retries for required usage event publishing.
+	usageEventsBackoffPolicy               string        // retry backoff policy for required usage event publishing.
+	usageEventsStreamingMode               string        // fallback strategy for streaming when required is configured.
+	usageEventsAttributes                  string        // request header mapping to usage event attributes.
+	usageEventsHTTPURL                     string        // HTTP sink URL.
+	usageEventsHTTPHeaders                 string        // static HTTP headers for HTTP sink requests.
+	usageEventsHTTPMaxResponseBytes        int           // max response bytes read from HTTP sink errors.
 	// rootPrefix is the root prefix for all the processors.
 	rootPrefix string
 	// maxRecvMsgSize is the maximum message size in bytes that the gRPC server can receive.
@@ -138,6 +149,26 @@ func parseAndValidateFlags(args []string) (extProcFlags, error) {
 		"Number of iterations used in the fallback PBKDF2 key derivation for MCP session encryption.")
 	fs.DurationVar(&flags.mcpWriteTimeout, "mcpWriteTimeout", 120*time.Second,
 		"The maximum duration before timing out writes of the MCP response")
+	fs.StringVar(&flags.usageEventsMode, "usage-events-mode", usageevents.ModeBestEffort,
+		"Usage event delivery mode. One of 'best_effort' or 'required'.")
+	fs.StringVar(&flags.usageEventsSink, "usage-events-sink", usageevents.SinkLog,
+		"Usage event sink type. One of 'log', 'noop', or 'http'.")
+	fs.IntVar(&flags.usageEventsTimeoutMs, "usage-events-timeout-ms", 500,
+		"Timeout in milliseconds for required usage event publishing.")
+	fs.IntVar(&flags.usageEventsMaxRetries, "usage-events-max-retries", 3,
+		"Maximum retries for required usage event publishing.")
+	fs.StringVar(&flags.usageEventsBackoffPolicy, "usage-events-backoff-policy", usageevents.BackoffPolicyExponential,
+		"Backoff policy for required usage event publishing. One of 'exponential' or 'constant'.")
+	fs.StringVar(&flags.usageEventsStreamingMode, "usage-events-streaming-mode", usageevents.StreamingModeBestEffortFallback,
+		"Behavior for streaming requests when required mode is configured. Currently supports only 'best_effort_fallback'.")
+	fs.StringVar(&flags.usageEventsAttributes, "usage-events-attributes", "",
+		"Comma-separated request header mapping for usage event attributes. Format: x-tenant-id:tenant.id,x-user-id:user.id.")
+	fs.StringVar(&flags.usageEventsHTTPURL, "usage-events-http-url", "",
+		"HTTP sink endpoint URL used when --usage-events-sink=http.")
+	fs.StringVar(&flags.usageEventsHTTPHeaders, "usage-events-http-headers", "",
+		"Comma-separated static HTTP headers for usage events HTTP sink. Format: key1:value1,key2:value2.")
+	fs.IntVar(&flags.usageEventsHTTPMaxResponseBytes, "usage-events-http-max-response-bytes", 4096,
+		"Maximum bytes read from usage events HTTP sink error responses.")
 
 	if err := fs.Parse(args); err != nil {
 		return extProcFlags{}, fmt.Errorf("failed to parse extProcFlags: %w", err)
@@ -173,6 +204,28 @@ func parseAndValidateFlags(args []string) (extProcFlags, error) {
 		if _, err := internalapi.ParseEndpointPrefixes(flags.endpointPrefixes); err != nil {
 			errs = append(errs, fmt.Errorf("failed to parse endpoint prefixes: %w", err))
 		}
+	}
+	if flags.usageEventsAttributes != "" {
+		if _, err := internalapi.ParseRequestHeaderAttributeMapping(flags.usageEventsAttributes); err != nil {
+			errs = append(errs, fmt.Errorf("failed to parse usage events attributes: %w", err))
+		}
+	}
+	if flags.usageEventsHTTPHeaders != "" {
+		if _, err := usageevents.ParseHTTPHeaderMapping(flags.usageEventsHTTPHeaders); err != nil {
+			errs = append(errs, fmt.Errorf("failed to parse usage events HTTP headers: %w", err))
+		}
+	}
+	if err := (usageevents.Config{
+		Mode:                 flags.usageEventsMode,
+		Sink:                 flags.usageEventsSink,
+		TimeoutMs:            flags.usageEventsTimeoutMs,
+		MaxRetries:           flags.usageEventsMaxRetries,
+		BackoffPolicy:        flags.usageEventsBackoffPolicy,
+		StreamingMode:        flags.usageEventsStreamingMode,
+		HTTPURL:              flags.usageEventsHTTPURL,
+		HTTPMaxResponseBytes: flags.usageEventsHTTPMaxResponseBytes,
+	}).Validate(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to validate usage events config: %w", err))
 	}
 
 	return flags, errors.Join(errs...)
