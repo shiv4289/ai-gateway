@@ -46,7 +46,10 @@ func (p *Publisher) Publish(ctx context.Context, event UsageEvent, streaming boo
 
 func (p *Publisher) publishBestEffort(event UsageEvent) {
 	go func() {
-		if err := p.sink.Publish(context.Background(), event); err != nil && p.logger != nil {
+		// Bound best-effort publish time so sink outages do not accumulate stuck goroutines.
+		attemptCtx, cancel := context.WithTimeout(context.Background(), time.Duration(p.cfg.TimeoutMs)*time.Millisecond)
+		defer cancel()
+		if err := p.sink.Publish(attemptCtx, event); err != nil && p.logger != nil {
 			p.logger.Warn("best effort usage event publish failed", "error", err)
 		}
 	}()
