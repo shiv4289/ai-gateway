@@ -157,6 +157,21 @@ func Test_parseAndValidateFlags(t *testing.T) {
 				logLevel:        slog.LevelInfo,
 				enableRedaction: false,
 			},
+			{
+				name: "with usage events http sink",
+				args: []string{
+					"-configPath", "/path/to/config.yaml",
+					"-usage-events-sink", "http",
+					"-usage-events-http-url", "http://adapter.default.svc/v1/usage-events",
+					"-usage-events-http-headers", "authorization:Bearer test,x-api-key:abc",
+					"-usage-events-attributes", "x-tenant-id:tenant.id,x-user-id:user.id",
+				},
+				configPath:      "/path/to/config.yaml",
+				rootPrefix:      "/",
+				addr:            ":1063",
+				logLevel:        slog.LevelInfo,
+				enableRedaction: false,
+			},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				flags, err := parseAndValidateFlags(tc.args)
@@ -200,6 +215,21 @@ func Test_parseAndValidateFlags(t *testing.T) {
 				name:          "invalid tracing header attributes - empty header",
 				args:          []string{"-configPath", "/path/to/config.yaml", "-spanRequestHeaderAttributes", ":session.id"},
 				expectedError: "failed to parse tracing header mapping: empty header or attribute at position 1: \":session.id\"",
+			},
+			{
+				name:          "invalid usage events sink",
+				args:          []string{"-configPath", "/path/to/config.yaml", "-usage-events-sink", "kafka"},
+				expectedError: "failed to validate usage events config: invalid usage events sink \"kafka\" (allowed: noop, log, http)",
+			},
+			{
+				name:          "http sink without url",
+				args:          []string{"-configPath", "/path/to/config.yaml", "-usage-events-sink", "http"},
+				expectedError: "failed to validate usage events config: usage events HTTP URL must be set when sink is \"http\"",
+			},
+			{
+				name:          "invalid usage events attributes",
+				args:          []string{"-configPath", "/path/to/config.yaml", "-usage-events-attributes", "x-tenant-id"},
+				expectedError: "failed to parse usage events attributes: invalid header-attribute pair at position 1: \"x-tenant-id\" (expected format: header:attribute)",
 			},
 		}
 
